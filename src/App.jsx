@@ -5,8 +5,8 @@ import LoginForm from './components/LoginForm';
 import { parseMenuExcel, downloadMenuJSON, copyToClipboard } from './utils/excelParser';
 import './index.css';
 
-// For local dev, use Express server. For Vercel, use empty string.
-const API_URL = 'http://localhost:3001';
+// Empty for Vercel (relative paths), or 'http://localhost:3001' for local dev
+const API_URL = '';
 
 function App() {
   const [menuData, setMenuData] = useState(null);
