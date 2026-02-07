@@ -35,19 +35,63 @@ export function parseMenuExcel(data) {
     return result;
 }
 
-
 function isExcelSerialDate(value) {
+    // Check for Excel serial number (numeric)
     if (typeof value === 'number' && value >= 40000 && value <= 50000) {
         return true;
     }
-    // Also check string representation of numbers
+    // Check string representation of serial numbers
     if (typeof value === 'string') {
         const num = parseFloat(value);
         if (!isNaN(num) && num >= 40000 && num <= 50000) {
             return true;
         }
+        // Check for formatted date strings like "2026-02-06 00:00:00" or "2026-02-06"
+        if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+            return true;
+        }
+        // Check for date format "06-02-2026" or "6-2-2026"
+        if (/^\d{1,2}-\d{1,2}-\d{4}/.test(value)) {
+            return true;
+        }
+    }
+    // Check if it's a JavaScript Date object
+    if (value instanceof Date && !isNaN(value)) {
+        return true;
     }
     return false;
+}
+
+function getDateDay(value) {
+    // Extract day of month from various date formats
+    if (typeof value === 'number' && value >= 40000 && value <= 50000) {
+        // Excel serial
+        const excelEpoch = new Date(1899, 11, 30);
+        const date = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+        return date.getDate();
+    }
+    if (typeof value === 'string') {
+        const num = parseFloat(value);
+        if (!isNaN(num) && num >= 40000 && num <= 50000) {
+            const excelEpoch = new Date(1899, 11, 30);
+            const date = new Date(excelEpoch.getTime() + num * 24 * 60 * 60 * 1000);
+            return date.getDate();
+        }
+        // Parse "2026-02-06 00:00:00" or "2026-02-06"
+        const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) {
+            return parseInt(isoMatch[3], 10);
+        }
+        // Parse "06-02-2026"
+        const dmyMatch = value.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+        if (dmyMatch) {
+            return parseInt(dmyMatch[1], 10);
+        }
+    }
+    if (value instanceof Date && !isNaN(value)) {
+        return value.getDate();
+    }
+    return null;
 }
 
 /**
@@ -193,13 +237,15 @@ function processMealCell(cell, mealArray, perDateItems) {
 
 
     if (isExcelSerialDate(cell)) {
-        const day = excelSerialToDay(cell);
+        const day = getDateDay(cell);
 
-        if (!perDateItems[day]) {
+        if (day && !perDateItems[day]) {
             perDateItems[day] = [];
         }
 
-        perDateItems._currentDate = day;
+        if (day) {
+            perDateItems._currentDate = day;
+        }
         return;
     }
 
