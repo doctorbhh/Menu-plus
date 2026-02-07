@@ -35,6 +35,42 @@ export function parseMenuExcel(data) {
     return result;
 }
 
+
+function isExcelSerialDate(value) {
+    if (typeof value === 'number' && value >= 40000 && value <= 50000) {
+        return true;
+    }
+    // Also check string representation of numbers
+    if (typeof value === 'string') {
+        const num = parseFloat(value);
+        if (!isNaN(num) && num >= 40000 && num <= 50000) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Convert Excel serial date to day of month
+ */
+function excelSerialToDay(serial) {
+    const num = typeof serial === 'string' ? parseFloat(serial) : serial;
+    // Excel serial date: days since 1900-01-01 (with Excel's date bug)
+    const excelEpoch = new Date(1899, 11, 30);
+    const date = new Date(excelEpoch.getTime() + num * 24 * 60 * 60 * 1000);
+    return date.getDate();
+}
+
+/**
+ * Convert Excel serial date to formatted date string
+ */
+function excelSerialToDateStr(serial) {
+    const num = typeof serial === 'string' ? parseFloat(serial) : serial;
+    const excelEpoch = new Date(1899, 11, 30);
+    const date = new Date(excelEpoch.getTime() + num * 24 * 60 * 60 * 1000);
+    return `${date.getDate().toString().padStart(2, '0')}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getFullYear()}`;
+}
+
 function parseSheet(data, menuArray, result, extractMonth) {
     let currentDay = null;
     let currentMeals = null;
@@ -76,6 +112,16 @@ function parseSheet(data, menuArray, result, extractMonth) {
         headerRowIndex = 2;
     }
 
+    // Track per-date items for each meal type
+
+    let perDateMeals = {
+        breakfast: {},
+        lunch: {},
+        snacks: {},
+        dinner: {}
+    };
+    let currentDateKey = 'default';
+
     // Process data rows - collect ALL rows for each day
     for (let i = headerRowIndex + 1; i < data.length; i++) {
         const row = data[i];
@@ -90,9 +136,11 @@ function parseSheet(data, menuArray, result, extractMonth) {
         if (isNewDay) {
             // Save previous day if exists
             if (currentDay && currentMeals) {
+                // Merge per-date items into regular arrays if no dates found
+                const finalMeals = finalizeMeals(currentMeals, perDateMeals, currentDay.dates);
                 menuArray.push({
                     ...currentDay,
-                    meals: { ...currentMeals }
+                    meals: finalMeals
                 });
             }
 
@@ -105,24 +153,151 @@ function parseSheet(data, menuArray, result, extractMonth) {
                 snacks: [],
                 dinner: []
             };
+            // Reset per-date tracking
+            perDateMeals = {
+                breakfast: {},
+                lunch: {},
+                snacks: {},
+                dinner: {}
+            };
+            currentDateKey = 'default';
         }
 
-        // Add meal items from this row (whether it's the day header row or continuation rows)
+        // Process each meal column, handling embedded dates
         if (currentMeals) {
-            addMealItem(row[colIndices.breakfast], currentMeals.breakfast);
-            addMealItem(row[colIndices.lunch], currentMeals.lunch);
-            addMealItem(row[colIndices.snacks], currentMeals.snacks);
-            addMealItem(row[colIndices.dinner], currentMeals.dinner);
+            processMealCell(row[colIndices.breakfast], currentMeals.breakfast, perDateMeals.breakfast);
+            processMealCell(row[colIndices.lunch], currentMeals.lunch, perDateMeals.lunch);
+            processMealCell(row[colIndices.snacks], currentMeals.snacks, perDateMeals.snacks);
+            processMealCell(row[colIndices.dinner], currentMeals.dinner, perDateMeals.dinner);
         }
     }
 
-    // Don't forget the last day
+
     if (currentDay && currentMeals) {
+        const finalMeals = finalizeMeals(currentMeals, perDateMeals, currentDay.dates);
         menuArray.push({
             ...currentDay,
-            meals: { ...currentMeals }
+            meals: finalMeals
         });
     }
+}
+
+/**
+ * Process a meal cell that may contain embedded dates
+ */
+function processMealCell(cell, mealArray, perDateItems) {
+    if (!cell) return;
+
+    const value = cell.toString().trim();
+    if (!value) return;
+
+
+    if (isExcelSerialDate(cell)) {
+        const day = excelSerialToDay(cell);
+
+        if (!perDateItems[day]) {
+            perDateItems[day] = [];
+        }
+
+        perDateItems._currentDate = day;
+        return;
+    }
+
+
+    const currentDate = perDateItems._currentDate || 'default';
+
+
+    if (!perDateItems[currentDate]) {
+        perDateItems[currentDate] = [];
+    }
+    if (!perDateItems[currentDate].includes(value)) {
+        perDateItems[currentDate].push(value);
+    }
+
+    if (!mealArray.includes(value)) {
+        mealArray.push(value);
+    }
+}
+
+/**
+ * Finalize meals by organizing per-date items
+ */
+function finalizeMeals(currentMeals, perDateMeals, dayDates) {
+    const result = {
+        breakfast: [],
+        lunch: [],
+        snacks: [],
+        dinner: []
+    };
+
+
+    ['breakfast', 'lunch', 'snacks', 'dinner'].forEach(mealType => {
+        const perDate = perDateMeals[mealType];
+        const dates = Object.keys(perDate).filter(k => k !== '_currentDate');
+
+
+        if (dates.length > 1 || (dates.length === 1 && dates[0] !== 'default')) {
+
+            const itemsWithDates = [];
+
+            dates.forEach(dateKey => {
+                if (dateKey === 'default') return;
+                const items = perDate[dateKey];
+                items.forEach(item => {
+
+                    itemsWithDates.push({
+                        date: parseInt(dateKey),
+                        item: item
+                    });
+                });
+            });
+
+
+            if (perDate['default']) {
+                perDate['default'].forEach(item => {
+                    itemsWithDates.push({
+                        date: null,
+                        item: item
+                    });
+                });
+            }
+
+
+            const groupedByDate = {};
+            itemsWithDates.forEach(({ date, item }) => {
+                const key = date || 'common';
+                if (!groupedByDate[key]) groupedByDate[key] = [];
+                if (!groupedByDate[key].includes(item)) {
+                    groupedByDate[key].push(item);
+                }
+            });
+
+
+            result[mealType] = [];
+
+
+            if (groupedByDate['common']) {
+                groupedByDate['common'].forEach(item => {
+                    result[mealType].push(item);
+                });
+            }
+
+
+            Object.keys(groupedByDate).forEach(dateKey => {
+                if (dateKey === 'common') return;
+                groupedByDate[dateKey].forEach(item => {
+                    // Tag items with their specific date
+                    result[mealType].push(`[${dateKey}] ${item}`);
+                });
+            });
+
+        } else {
+            // No per-date separation needed, use original items
+            result[mealType] = [...currentMeals[mealType]];
+        }
+    });
+
+    return result;
 }
 
 function parseDayInfo(dateStr) {
@@ -157,18 +332,6 @@ function parseDayInfo(dateStr) {
         dates: [],
         rawDate: cleanStr
     };
-}
-
-function addMealItem(cell, mealArray) {
-    if (!cell) return;
-
-    const value = cell.toString().trim();
-    if (!value) return;
-
-    // Don't add duplicates
-    if (!mealArray.includes(value)) {
-        mealArray.push(value);
-    }
 }
 
 /**
