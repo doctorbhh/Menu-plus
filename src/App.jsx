@@ -6,7 +6,7 @@ import { parseMenuExcel, downloadMenuJSON, copyToClipboard } from './utils/excel
 import './index.css';
 
 // For local dev, use Express server. For Vercel, use empty string.
-const API_URL = 'http://localhost:3001';
+const API_URL = '';
 
 function App() {
   const [menuData, setMenuData] = useState(null);
