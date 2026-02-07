@@ -8,25 +8,29 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-me';
 const DB_NAME = 'menuplus';
 
 let cachedClient = null;
-let cachedDb = null;
 
 async function connectToDatabase() {
-    if (cachedClient && cachedDb) {
-        return { client: cachedClient, db: cachedDb };
+    if (cachedClient) {
+        return cachedClient.db(DB_NAME);
     }
 
     if (!MONGODB_URI) {
-        throw new Error('MONGODB_URI environment variable not set');
+        throw new Error('MONGODB_URI not configured');
     }
 
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
-    const db = client.db(DB_NAME);
+    try {
+        const client = new MongoClient(MONGODB_URI, {
+            maxPoolSize: 1,
+            serverSelectionTimeoutMS: 5000,
+            connectTimeoutMS: 10000,
+        });
 
-    cachedClient = client;
-    cachedDb = db;
-
-    return { client, db };
+        await client.connect();
+        cachedClient = client;
+        return client.db(DB_NAME);
+    } catch (err) {
+        throw new Error(`MongoDB connection failed: ${err.message}`);
+    }
 }
 
 module.exports = async function handler(req, res) {
@@ -39,17 +43,40 @@ module.exports = async function handler(req, res) {
         return res.status(200).end();
     }
 
+    // Health check for GET requests
+    if (req.method === 'GET') {
+        return res.status(200).json({
+            status: 'ok',
+            hasMongoUri: !!MONGODB_URI,
+            mongoUriStart: MONGODB_URI ? MONGODB_URI.substring(0, 20) + '...' : 'not set'
+        });
+    }
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    let db;
     try {
-        const { db } = await connectToDatabase();
-        const adminCollection = db.collection('admin');
+        db = await connectToDatabase();
+    } catch (err) {
+        console.error('DB connection error:', err);
+        return res.status(500).json({ error: err.message });
+    }
 
-        const { action, username, password, token } = req.body;
+    try {
+        const adminCollection = db.collection('admin');
+        const { action, username, password, token } = req.body || {};
+
+        if (!action) {
+            return res.status(400).json({ error: 'Missing action parameter' });
+        }
 
         if (action === 'login') {
+            if (!username || !password) {
+                return res.status(400).json({ error: 'Username and password required' });
+            }
+
             const admin = await adminCollection.findOne({ username });
 
             if (!admin) {
@@ -76,6 +103,10 @@ module.exports = async function handler(req, res) {
         }
 
         if (action === 'register') {
+            if (!username || !password) {
+                return res.status(400).json({ error: 'Username and password required' });
+            }
+
             const existingAdmin = await adminCollection.findOne({});
 
             if (existingAdmin) {
@@ -94,6 +125,10 @@ module.exports = async function handler(req, res) {
         }
 
         if (action === 'verify') {
+            if (!token) {
+                return res.status(400).json({ error: 'Token required' });
+            }
+
             try {
                 const decoded = jwt.verify(token, JWT_SECRET);
                 return res.status(200).json({ valid: true, username: decoded.username });
@@ -102,9 +137,9 @@ module.exports = async function handler(req, res) {
             }
         }
 
-        return res.status(400).json({ error: 'Invalid action' });
+        return res.status(400).json({ error: 'Invalid action: ' + action });
     } catch (error) {
         console.error('Auth error:', error);
-        return res.status(500).json({ error: 'Server error: ' + error.message });
+        return res.status(500).json({ error: 'Auth error: ' + error.message });
     }
 };
