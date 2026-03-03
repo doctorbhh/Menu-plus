@@ -113,6 +113,22 @@ function App() {
   const handleFileLoaded = (arrayBuffer, name) => {
     try {
       const parsed = parseMenuExcel(arrayBuffer);
+
+      // If month wasn't extracted from file content, try the filename
+      // e.g., "VIT-AP_Mar2026 Mess Menu_Final - Veg & Non-Veg.csv"
+      if (!parsed.month && name) {
+        const monthMap = {
+          jan: 'January', feb: 'February', mar: 'March', apr: 'April',
+          may: 'May', jun: 'June', jul: 'July', aug: 'August',
+          sep: 'September', oct: 'October', nov: 'November', dec: 'December'
+        };
+        const match = name.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s*(\d{4})/i);
+        if (match) {
+          const monthName = monthMap[match[1].toLowerCase().substring(0, 3)] || match[1];
+          parsed.month = `${monthName} ${match[2]}`;
+        }
+      }
+
       setMenuData(parsed);
       setFileName(name);
       showToast("Menu parsed successfully! 🎉");
