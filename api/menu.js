@@ -57,9 +57,23 @@ module.exports = async function handler(req, res) {
         const menuCollection = db.collection('menu');
 
         // GET /api/menu - Public: Fetch menu
+        // Supports ?month=February%202026 to fetch archived menus
         if (req.method === 'GET') {
-            const menu = await menuCollection.findOne({ _id: 'current' });
+            const monthParam = req.query?.month;
 
+            if (monthParam) {
+                // Fetch from archive
+                const archiveCollection = db.collection('menu_archive');
+                const archivedMenu = await archiveCollection.findOne({ _id: monthParam });
+                if (archivedMenu) {
+                    const { _id, ...menuData } = archivedMenu;
+                    return res.status(200).json(menuData);
+                }
+                return res.status(404).json({ error: `No archived menu for ${monthParam}` });
+            }
+
+            // Default: fetch current menu
+            const menu = await menuCollection.findOne({ _id: 'current' });
             if (menu) {
                 const { _id, ...menuData } = menu;
                 return res.status(200).json(menuData);
@@ -74,6 +88,19 @@ module.exports = async function handler(req, res) {
 
             if (!user) {
                 return res.status(401).json({ error: 'Unauthorized. Please login.' });
+            }
+
+            // Archive the current menu before overwriting
+            const currentMenu = await menuCollection.findOne({ _id: 'current' });
+            if (currentMenu) {
+                const archiveCollection = db.collection('menu_archive');
+                const { _id, ...archiveData } = currentMenu;
+                const archiveKey = archiveData.month || 'unknown';
+                await archiveCollection.updateOne(
+                    { _id: archiveKey },
+                    { $set: { ...archiveData, _id: archiveKey } },
+                    { upsert: true }
+                );
             }
 
             const menuData = req.body;
